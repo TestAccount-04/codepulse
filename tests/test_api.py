@@ -85,3 +85,37 @@ def test_api_websocket_connection(api_client: TestClient):
         websocket.send_text("ping")
         data = websocket.receive_text()
         assert "pong" in data
+
+
+def test_api_session_and_agents_endpoints(api_client: TestClient):
+    # Test create session
+    create_resp = api_client.post(
+        "/api/sessions",
+        json={"agent_name": "claude-code", "task_description": "API test session"},
+    )
+    assert create_resp.status_code == 200
+    session_data = create_resp.json()
+    assert session_data["agent_name"] == "claude-code"
+    session_id = session_data["id"]
+
+    # Test list sessions
+    list_resp = api_client.get("/api/sessions")
+    assert list_resp.status_code == 200
+    sessions = list_resp.json()
+    assert any(s["id"] == session_id for s in sessions)
+
+    # Test session details
+    detail_resp = api_client.get(f"/api/sessions/{session_id}")
+    assert detail_resp.status_code == 200
+    assert detail_resp.json()["session_id"] == session_id
+
+    # Test agents list
+    agents_resp = api_client.get("/api/agents")
+    assert agents_resp.status_code == 200
+    agents = agents_resp.json()
+    assert len(agents) >= 5
+
+    # Test agent hook install
+    install_resp = api_client.post("/api/agents/claude-code/install")
+    assert install_resp.status_code == 200
+    assert install_resp.json()["installed"] is True

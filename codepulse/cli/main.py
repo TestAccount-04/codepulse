@@ -16,13 +16,17 @@ from codepulse.backend.storage.sqlite_store import SQLiteStore
 from codepulse.core.change_detector.coordinator import ChangeCoordinator
 from codepulse.core.models import ChangeStatus, SymbolDiff, SymbolType
 from codepulse.core.repository_scanner.scanner import RepositoryScanner
+from codepulse.core.session_manager.manager import SessionManager
 from codepulse.core.symbol_graph.graph import SymbolGraphManager
+from codepulse.integrations.registry import default_registry
 
 app = typer.Typer(
     name="codepulse",
     help="CodePulse — Local-first code change intelligence and visualization platform",
     add_completion=False,
 )
+agents_app = typer.Typer(name="agents", help="Manage AI coding agent adapters and hooks.")
+app.add_typer(agents_app, name="agents")
 console = Console()
 
 
@@ -315,6 +319,103 @@ def watch(
         console.print("\n[bold blue]Stopping CodePulse watcher...[/bold blue]")
         coordinator.stop_watching()
         console.print("[green]Watcher stopped cleanly.[/green]")
+
+
+@app.command()
+def sessions(
+    path: Path = typer.Argument(Path("."), help="Path to repository root"),
+    limit: int = typer.Option(20, "--limit", "-n", help="Max sessions to display"),
+) -> None:
+    """Display active and historical AI coding agent sessions."""
+    repo_dir = path.resolve()
+    db_file = get_db_path(repo_dir)
+
+    if not db_file.exists():
+        console.print("[bold red]CodePulse is not initialized. Run 'codepulse init' and 'codepulse scan' first.[/bold red]")
+        raise typer.Exit(code=1)
+
+    store = SQLiteStore(db_file)
+    session_mgr = SessionManager(store, repo_id="default")
+    session_list = session_mgr.list_sessions(limit=limit)
+
+    table = Table(title=f"Agent Sessions ({len(session_list)})", show_header=True, header_style="bold cyan")
+    table.add_column("Session ID", style="dim", width=14)
+    table.add_column("Agent", style="bold white", width=14)
+    table.add_column("Status", width=10)
+    table.add_column("Started", style="dim", width=20)
+    table.add_column("Task Description", style="yellow")
+
+    for s in session_list:
+        status_color = "[green]active[/green]" if s.status == "active" else "[dim]completed[/dim]"
+        table.add_row(
+            s.id[:12] + "...",
+            s.agent_name,
+            status_color,
+            s.started_at[:19].replace("T", " "),
+            s.task_description or "(No description provided)",
+        )
+
+    console.print(table)
+
+
+@agents_app.command("list")
+def agents_list(
+    path: Path = typer.Argument(Path("."), help="Path to repository root")
+) -> None:
+    """List supported AI agent integrations and their status."""
+    repo_dir = path.resolve()
+    status_list = default_registry.get_status(repo_dir)
+
+    table = Table(title="AI Agent Adapters", show_header=True, header_style="bold magenta")
+    table.add_column("Adapter", style="cyan")
+    table.add_column("Display Name", style="white")
+    table.add_column("CLI Detected", width=14)
+    table.add_column("Hook Active", width=14)
+
+    for a in status_list:
+        inst_badge = "[green]Yes[/green]" if a["installed"] else "[dim]No[/dim]"
+        hook_badge = "[green]Active[/green]" if a["hooked"] else "[dim]Inactive[/dim]"
+        table.add_row(a["name"], a["display_name"], inst_badge, hook_badge)
+
+    console.print(table)
+
+
+@agents_app.command("install")
+def agents_install(
+    agent_name: str = typer.Argument(..., help="Name of agent (e.g. claude-code, cursor, codex, antigravity, generic-git)"),
+    path: Path = typer.Argument(Path("."), help="Path to repository root"),
+) -> None:
+    """Install integration hook for a specific coding agent."""
+    repo_dir = path.resolve()
+    adapter = default_registry.get_adapter(agent_name)
+    if not adapter:
+        console.print(f"[bold red]Unknown agent adapter '{agent_name}'. Run 'codepulse agents list' to view supported adapters.[/bold red]")
+        raise typer.Exit(code=1)
+
+    success = adapter.install_hook(repo_dir)
+    if success:
+        console.print(f"[bold green]Successfully installed hook for {adapter.display_name} in {repo_dir}[/bold green]")
+    else:
+        console.print(f"[bold red]Failed to install hook for {adapter.display_name}.[/bold red]")
+
+
+@agents_app.command("uninstall")
+def agents_uninstall(
+    agent_name: str = typer.Argument(..., help="Name of agent to uninstall hook for"),
+    path: Path = typer.Argument(Path("."), help="Path to repository root"),
+) -> None:
+    """Uninstall integration hook for a specific coding agent."""
+    repo_dir = path.resolve()
+    adapter = default_registry.get_adapter(agent_name)
+    if not adapter:
+        console.print(f"[bold red]Unknown agent adapter '{agent_name}'.[/bold red]")
+        raise typer.Exit(code=1)
+
+    success = adapter.uninstall_hook(repo_dir)
+    if success:
+        console.print(f"[bold green]Successfully uninstalled hook for {adapter.display_name}.[/bold green]")
+    else:
+        console.print(f"[yellow]No active hook found for {adapter.display_name}.[/yellow]")
 
 
 @app.command()

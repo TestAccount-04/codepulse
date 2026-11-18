@@ -9,13 +9,26 @@ from typing import Any, Dict, List, Optional
 from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
 
 from codepulse.backend.storage.sqlite_store import SQLiteStore
 from codepulse.backend.websocket.manager import ws_manager
 from codepulse.core.change_detector.coordinator import ChangeCoordinator
 from codepulse.core.models import ChangeStatus, SymbolDiff, SymbolType
 from codepulse.core.repository_scanner.scanner import RepositoryScanner
+from codepulse.core.session_manager.manager import SessionManager
 from codepulse.core.symbol_graph.graph import SymbolGraphManager
+from codepulse.integrations.registry import default_registry
+
+
+class CreateSessionRequest(BaseModel):
+    agent_name: str
+    task_description: Optional[str] = None
+    metadata: Optional[Dict[str, Any]] = None
+
+
+class UpdateSessionRequest(BaseModel):
+    task_description: str
 
 
 def create_app(
@@ -28,6 +41,7 @@ def create_app(
     store = SQLiteStore(actual_db)
     coordinator = ChangeCoordinator(root_path, store, repo_id="default")
     graph_mgr = SymbolGraphManager(store, repo_id="default")
+    session_mgr = SessionManager(store, repo_id="default")
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -222,6 +236,59 @@ def create_app(
     def get_diff(file_path: str) -> Dict[str, Any]:
         diff_text = coordinator.git_tracker.get_file_diff(file_path)
         return {"file_path": file_path, "diff": diff_text}
+
+    # Session Management
+    @app.get("/api/sessions")
+    def list_sessions(limit: int = Query(50)) -> List[Dict[str, Any]]:
+        sessions = session_mgr.list_sessions(limit=limit)
+        return [s.model_dump() for s in sessions]
+
+    @app.post("/api/sessions")
+    def create_session(req: CreateSessionRequest) -> Dict[str, Any]:
+        session = session_mgr.start_session(
+            agent_name=req.agent_name,
+            task_description=req.task_description,
+            metadata=req.metadata,
+        )
+        return session.model_dump()
+
+    @app.get("/api/sessions/{session_id}")
+    def get_session_details(session_id: str) -> Dict[str, Any]:
+        summary = session_mgr.get_session_summary(session_id)
+        if not summary:
+            raise HTTPException(status_code=404, detail="Session not found")
+        return summary
+
+    @app.patch("/api/sessions/{session_id}")
+    def update_session_task(session_id: str, req: UpdateSessionRequest) -> Dict[str, Any]:
+        session_mgr.update_task_description(session_id, req.task_description)
+        return {"status": "updated", "session_id": session_id}
+
+    @app.post("/api/sessions/{session_id}/end")
+    def end_session(session_id: str, status: str = Query("completed")) -> Dict[str, Any]:
+        session_mgr.end_session(session_id, status=status)
+        return {"status": "ended", "session_id": session_id}
+
+    # Agent Adapters
+    @app.get("/api/agents")
+    def list_agents() -> List[Dict[str, Any]]:
+        return default_registry.get_status(root_path)
+
+    @app.post("/api/agents/{agent_name}/install")
+    def install_agent_hook(agent_name: str) -> Dict[str, Any]:
+        adapter = default_registry.get_adapter(agent_name)
+        if not adapter:
+            raise HTTPException(status_code=404, detail=f"Adapter {agent_name} not found")
+        success = adapter.install_hook(root_path)
+        return {"agent": agent_name, "installed": success}
+
+    @app.post("/api/agents/{agent_name}/uninstall")
+    def uninstall_agent_hook(agent_name: str) -> Dict[str, Any]:
+        adapter = default_registry.get_adapter(agent_name)
+        if not adapter:
+            raise HTTPException(status_code=404, detail=f"Adapter {agent_name} not found")
+        success = adapter.uninstall_hook(root_path)
+        return {"agent": agent_name, "uninstalled": success}
 
     @app.websocket("/ws/events")
     async def websocket_events(websocket: WebSocket) -> None:

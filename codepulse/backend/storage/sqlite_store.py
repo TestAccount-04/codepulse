@@ -10,6 +10,7 @@ from typing import Any, Dict, List, Optional
 
 from codepulse.backend.storage.schema import SCHEMA_SQL
 from codepulse.core.models import (
+    AgentSession,
     ChangeEvent,
     ChangeStatus,
     FileInfo,
@@ -344,6 +345,131 @@ class SQLiteStore:
             query += " ORDER BY timestamp DESC LIMIT ?"
             params.append(limit)
             rows = conn.execute(query, params).fetchall()
+            return [
+                ChangeEvent(
+                    id=r["id"],
+                    repo_id=r["repo_id"],
+                    timestamp=r["timestamp"],
+                    event_type=r["event_type"],
+                    file_path=r["file_path"],
+                    symbol_id=r["symbol_id"],
+                    session_id=r["session_id"],
+                    agent_name=r["agent_name"],
+                    diff_content=r["diff_content"],
+                    summary=r["summary"],
+                )
+                for r in rows
+            ]
+
+    def create_session(self, session: AgentSession) -> None:
+        with self.get_connection() as conn:
+            conn.execute(
+                """
+                INSERT INTO repositories (id, root_path, created_at)
+                VALUES (?, ?, ?)
+                ON CONFLICT(id) DO NOTHING
+                """,
+                (session.repo_id, "", session.started_at),
+            )
+            conn.execute(
+                """
+                INSERT INTO sessions (
+                    id, repo_id, agent_name, task_description,
+                    started_at, ended_at, status, metadata
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                    task_description = excluded.task_description,
+                    ended_at = excluded.ended_at,
+                    status = excluded.status,
+                    metadata = excluded.metadata
+                """,
+                (
+                    session.id,
+                    session.repo_id,
+                    session.agent_name,
+                    session.task_description,
+                    session.started_at,
+                    session.ended_at,
+                    session.status,
+                    json.dumps(session.metadata),
+                ),
+            )
+
+    def get_session(self, repo_id: str, session_id: str) -> Optional[AgentSession]:
+        with self.get_connection() as conn:
+            row = conn.execute(
+                "SELECT * FROM sessions WHERE repo_id = ? AND id = ?",
+                (repo_id, session_id),
+            ).fetchone()
+            if not row:
+                return None
+            return AgentSession(
+                id=row["id"],
+                repo_id=row["repo_id"],
+                agent_name=row["agent_name"],
+                task_description=row["task_description"],
+                started_at=row["started_at"],
+                ended_at=row["ended_at"],
+                status=row["status"],
+                metadata=json.loads(row["metadata"] or "{}"),
+            )
+
+    def list_sessions(self, repo_id: str, limit: int = 50) -> List[AgentSession]:
+        with self.get_connection() as conn:
+            rows = conn.execute(
+                "SELECT * FROM sessions WHERE repo_id = ? ORDER BY started_at DESC LIMIT ?",
+                (repo_id, limit),
+            ).fetchall()
+            return [
+                AgentSession(
+                    id=r["id"],
+                    repo_id=r["repo_id"],
+                    agent_name=r["agent_name"],
+                    task_description=r["task_description"],
+                    started_at=r["started_at"],
+                    ended_at=r["ended_at"],
+                    status=r["status"],
+                    metadata=json.loads(r["metadata"] or "{}"),
+                )
+                for r in rows
+            ]
+
+    def update_session(
+        self,
+        repo_id: str,
+        session_id: str,
+        status: Optional[str] = None,
+        task_description: Optional[str] = None,
+        ended_at: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        with self.get_connection() as conn:
+            updates = []
+            params: List[Any] = []
+            if status is not None:
+                updates.append("status = ?")
+                params.append(status)
+            if task_description is not None:
+                updates.append("task_description = ?")
+                params.append(task_description)
+            if ended_at is not None:
+                updates.append("ended_at = ?")
+                params.append(ended_at)
+            if metadata is not None:
+                updates.append("metadata = ?")
+                params.append(json.dumps(metadata))
+
+            if updates:
+                query = f"UPDATE sessions SET {', '.join(updates)} WHERE repo_id = ? AND id = ?"
+                params.extend([repo_id, session_id])
+                conn.execute(query, params)
+
+    def get_session_events(self, repo_id: str, session_id: str) -> List[ChangeEvent]:
+        with self.get_connection() as conn:
+            rows = conn.execute(
+                "SELECT * FROM change_events WHERE repo_id = ? AND session_id = ? ORDER BY timestamp ASC",
+                (repo_id, session_id),
+            ).fetchall()
             return [
                 ChangeEvent(
                     id=r["id"],

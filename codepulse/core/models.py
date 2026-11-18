@@ -113,3 +113,14 @@ class ChangeEvent(BaseModel):
     agent_name: str = "unknown"
     diff_content: Optional[str] = None
     summary: Optional[str] = None
+
+
+class AgentSession(BaseModel):
+    id: str
+    repo_id: str = "default"
+    agent_name: str
+    task_description: Optional[str] = None
+    started_at: str
+    ended_at: Optional[str] = None
+    status: str = "active"
+    metadata: Dict[str, Any] = Field(default_factory=dict)
