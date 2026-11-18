@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sys
+import time
 from pathlib import Path
 from typing import Optional
 import typer
@@ -12,9 +13,10 @@ from rich.tree import Tree
 from rich.panel import Panel
 
 from codepulse.backend.storage.sqlite_store import SQLiteStore
+from codepulse.core.change_detector.coordinator import ChangeCoordinator
+from codepulse.core.models import ChangeStatus, SymbolDiff, SymbolType
 from codepulse.core.repository_scanner.scanner import RepositoryScanner
 from codepulse.core.symbol_graph.graph import SymbolGraphManager
-from codepulse.core.models import SymbolType
 
 app = typer.Typer(
     name="codepulse",
@@ -201,6 +203,118 @@ def graph(
     console.print(table)
     if len(symbols) > 50:
         console.print(f"[dim]... and {len(symbols) - 50} more symbols. Use --tree or --file to filter.[/dim]")
+
+
+@app.command()
+def changes(
+    path: Path = typer.Argument(Path("."), help="Path to repository root"),
+    limit: int = typer.Option(50, "--limit", "-n", help="Max events to display"),
+) -> None:
+    """List detected symbol modifications and change history."""
+    repo_dir = path.resolve()
+    db_file = get_db_path(repo_dir)
+
+    if not db_file.exists():
+        console.print("[bold red]CodePulse is not initialized. Run 'codepulse init' and 'codepulse scan' first.[/bold red]")
+        raise typer.Exit(code=1)
+
+    store = SQLiteStore(db_file)
+    events = store.list_change_events("default", limit=limit)
+    changed_symbols = store.list_changed_symbols("default")
+
+    if changed_symbols:
+        table = Table(title="Current Changed / Impacted Symbols", show_header=True, header_style="bold yellow")
+        table.add_column("Status", width=12)
+        table.add_column("Type", width=10)
+        table.add_column("Symbol", style="bold white")
+        table.add_column("File Path", style="cyan")
+
+        color_map = {
+            ChangeStatus.ADDED: "[green]Added[/green]",
+            ChangeStatus.MODIFIED: "[yellow]Modified[/yellow]",
+            ChangeStatus.DELETED: "[red]Deleted[/red]",
+            ChangeStatus.RENAMED: "[blue]Renamed[/blue]",
+            ChangeStatus.IMPACTED: "[magenta]Impacted[/magenta]",
+            ChangeStatus.UNCHANGED: "[dim]Unchanged[/dim]",
+        }
+
+        for sym in changed_symbols:
+            table.add_row(
+                color_map.get(sym.change_status, sym.change_status.value),
+                sym.symbol_type.value,
+                sym.name,
+                sym.file_path,
+            )
+        console.print(table)
+
+    if events:
+        event_table = Table(title=f"Recent Activity Events ({len(events)})", show_header=True, header_style="bold cyan")
+        event_table.add_column("Time", style="dim", width=20)
+        event_table.add_column("Event", width=12)
+        event_table.add_column("Agent", width=12)
+        event_table.add_column("Summary", style="white")
+
+        for ev in events:
+            ev_color = {
+                "added": "[green]added[/green]",
+                "modified": "[yellow]modified[/yellow]",
+                "deleted": "[red]deleted[/red]",
+                "renamed": "[blue]renamed[/blue]",
+            }.get(ev.event_type, ev.event_type)
+
+            event_table.add_row(
+                ev.timestamp[:19].replace("T", " "),
+                ev_color,
+                ev.agent_name,
+                ev.summary or ev.file_path,
+            )
+        console.print(event_table)
+
+    if not changed_symbols and not events:
+        console.print("[green]No uncommitted or recorded changes found. Repository is clean.[/green]")
+
+
+@app.command()
+def watch(
+    path: Path = typer.Argument(Path("."), help="Path to repository root")
+) -> None:
+    """Start real-time monitoring of repository changes and symbol updates."""
+    repo_dir = path.resolve()
+    db_file = get_db_path(repo_dir)
+
+    if not db_file.exists():
+        console.print("[bold red]CodePulse is not initialized. Run 'codepulse init' and 'codepulse scan' first.[/bold red]")
+        raise typer.Exit(code=1)
+
+    store = SQLiteStore(db_file)
+    coordinator = ChangeCoordinator(repo_dir, store, repo_id="default")
+
+    console.print(f"[bold cyan]CodePulse Change Watcher active on:[/bold cyan] {repo_dir}")
+    baseline = coordinator.capture_baseline()
+    console.print(f"[dim]Git Head: {baseline.get('head_commit') or 'none'} | Monitoring started[/dim]")
+
+    def on_change(diffs: list[SymbolDiff]) -> None:
+        for d in diffs:
+            color = {
+                ChangeStatus.ADDED: "green",
+                ChangeStatus.MODIFIED: "yellow",
+                ChangeStatus.DELETED: "red",
+                ChangeStatus.RENAMED: "blue",
+            }.get(d.status, "white")
+            console.print(
+                f"[{color}][{d.status.value.upper()}][/{color}] {d.symbol_type.value} [bold]{d.symbol_name}[/bold] in [cyan]{d.file_path}[/cyan]"
+            )
+
+    coordinator.start_watching(on_change_callback=on_change)
+    console.print("[yellow]Press Ctrl+C to stop watching.[/yellow]")
+
+    try:
+        while True:
+            time.sleep(1)
+    except KeyboardInterrupt:
+        console.print("\n[bold blue]Stopping CodePulse watcher...[/bold blue]")
+        coordinator.stop_watching()
+        console.print("[green]Watcher stopped cleanly.[/green]")
 
 
 if __name__ == "__main__":

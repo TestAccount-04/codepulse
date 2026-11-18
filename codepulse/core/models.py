@@ -87,3 +87,29 @@ class ParseResult(BaseModel):
     symbols: List[Symbol] = Field(default_factory=list)
     relationships: List[Relationship] = Field(default_factory=list)
     errors: List[str] = Field(default_factory=list)
+
+
+class SymbolDiff(BaseModel):
+    symbol_id: str
+    symbol_name: str
+    symbol_type: SymbolType
+    file_path: str
+    status: ChangeStatus
+    diff_text: Optional[str] = None
+    old_signature: Optional[str] = None
+    new_signature: Optional[str] = None
+    old_start_line: Optional[int] = None
+    new_start_line: Optional[int] = None
+
+
+class ChangeEvent(BaseModel):
+    id: str
+    repo_id: str = "default"
+    timestamp: str
+    event_type: str
+    file_path: str
+    symbol_id: Optional[str] = None
+    session_id: Optional[str] = None
+    agent_name: str = "unknown"
+    diff_content: Optional[str] = None
+    summary: Optional[str] = None

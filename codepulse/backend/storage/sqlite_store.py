@@ -10,6 +10,7 @@ from typing import Any, Dict, List, Optional
 
 from codepulse.backend.storage.schema import SCHEMA_SQL
 from codepulse.core.models import (
+    ChangeEvent,
     ChangeStatus,
     FileInfo,
     ParseResult,
@@ -287,6 +288,99 @@ class SQLiteStore:
                 )
                 for row in rows
             ]
+
+    def record_change_event(self, event: ChangeEvent) -> None:
+        with self.get_connection() as conn:
+            conn.execute(
+                """
+                INSERT INTO repositories (id, root_path, created_at)
+                VALUES (?, ?, ?)
+                ON CONFLICT(id) DO NOTHING
+                """,
+                (event.repo_id, "", event.timestamp),
+            )
+            if event.session_id:
+                conn.execute(
+                    """
+                    INSERT INTO sessions (id, repo_id, agent_name, started_at)
+                    VALUES (?, ?, ?, ?)
+                    ON CONFLICT(id) DO NOTHING
+                    """,
+                    (event.session_id, event.repo_id, event.agent_name, event.timestamp),
+                )
+            conn.execute(
+                """
+                INSERT INTO change_events (
+                    id, repo_id, timestamp, event_type, file_path,
+                    symbol_id, session_id, agent_name, diff_content, summary
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    event.id,
+                    event.repo_id,
+                    event.timestamp,
+                    event.event_type,
+                    event.file_path,
+                    event.symbol_id,
+                    event.session_id,
+                    event.agent_name,
+                    event.diff_content,
+                    event.summary,
+                ),
+            )
+
+    def list_change_events(
+        self,
+        repo_id: str,
+        limit: int = 50,
+        file_path: Optional[str] = None,
+    ) -> List[ChangeEvent]:
+        with self.get_connection() as conn:
+            query = "SELECT * FROM change_events WHERE repo_id = ?"
+            params: List[Any] = [repo_id]
+            if file_path:
+                query += " AND file_path = ?"
+                params.append(file_path)
+            query += " ORDER BY timestamp DESC LIMIT ?"
+            params.append(limit)
+            rows = conn.execute(query, params).fetchall()
+            return [
+                ChangeEvent(
+                    id=r["id"],
+                    repo_id=r["repo_id"],
+                    timestamp=r["timestamp"],
+                    event_type=r["event_type"],
+                    file_path=r["file_path"],
+                    symbol_id=r["symbol_id"],
+                    session_id=r["session_id"],
+                    agent_name=r["agent_name"],
+                    diff_content=r["diff_content"],
+                    summary=r["summary"],
+                )
+                for r in rows
+            ]
+
+    def update_symbol_status(self, repo_id: str, symbol_id: str, status: ChangeStatus) -> None:
+        with self.get_connection() as conn:
+            conn.execute(
+                "UPDATE symbols SET change_status = ? WHERE repo_id = ? AND id = ?",
+                (status.value, repo_id, symbol_id),
+            )
+
+    def list_changed_symbols(self, repo_id: str) -> List[Symbol]:
+        with self.get_connection() as conn:
+            rows = conn.execute(
+                "SELECT * FROM symbols WHERE repo_id = ? AND change_status != 'unchanged' ORDER BY file_path ASC, start_line ASC",
+                (repo_id,),
+            ).fetchall()
+            return [self._row_to_symbol(r) for r in rows]
+
+    def reset_all_symbol_statuses(self, repo_id: str) -> None:
+        with self.get_connection() as conn:
+            conn.execute(
+                "UPDATE symbols SET change_status = 'unchanged' WHERE repo_id = ?",
+                (repo_id,),
+            )
 
     def get_metrics(self, repo_id: str) -> RepositoryMetrics:
         with self.get_connection() as conn:
