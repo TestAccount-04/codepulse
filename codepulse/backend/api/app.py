@@ -16,8 +16,17 @@ from codepulse.backend.websocket.manager import ws_manager
 from codepulse.core.change_detector.coordinator import ChangeCoordinator
 from codepulse.core.explanation_engine.engine import ExplanationEngine
 from codepulse.core.impact_analyzer.analyzer import ImpactAnalyzer
-from codepulse.core.models import ChangeStatus, SymbolDiff, SymbolType
+from codepulse.core.models import (
+    ChangeStatus,
+    ReviewAnnotation,
+    ReviewDetail,
+    ReviewItem,
+    ReviewStatus,
+    SymbolDiff,
+    SymbolType,
+)
 from codepulse.core.repository_scanner.scanner import RepositoryScanner
+from codepulse.core.review_engine.engine import ReviewEngine
 from codepulse.core.session_manager.manager import SessionManager
 from codepulse.core.symbol_graph.graph import SymbolGraphManager
 from codepulse.integrations.registry import default_registry
@@ -33,6 +42,24 @@ class UpdateSessionRequest(BaseModel):
     task_description: str
 
 
+class SetReviewStatusRequest(BaseModel):
+    status: ReviewStatus
+    decision_reason: Optional[str] = None
+    note: Optional[str] = None
+    author: str = "reviewer"
+
+
+class AddReviewAnnotationRequest(BaseModel):
+    note: str
+    author: str = "reviewer"
+
+
+class RollbackRequest(BaseModel):
+    reason: Optional[str] = None
+    safe_rollback: bool = True
+    author: str = "reviewer"
+
+
 def create_app(
     repo_root: Optional[Path] = None,
     db_path: Optional[Path] = None,
@@ -46,6 +73,15 @@ def create_app(
     session_mgr = SessionManager(store, repo_id="default")
     impact_analyzer = ImpactAnalyzer(store, repo_id="default")
     explanation_engine = ExplanationEngine()
+    review_engine = ReviewEngine(
+        root_path=root_path,
+        store=store,
+        repo_id="default",
+        git_tracker=coordinator.git_tracker,
+        impact_analyzer=impact_analyzer,
+        explanation_engine=explanation_engine,
+        session_mgr=session_mgr,
+    )
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -334,6 +370,69 @@ def create_app(
             raise HTTPException(status_code=404, detail=f"Adapter {agent_name} not found")
         success = adapter.uninstall_hook(root_path)
         return {"agent": agent_name, "uninstalled": success}
+
+    # Review Endpoints
+    @app.get("/api/reviews")
+    def list_reviews(status: Optional[ReviewStatus] = Query(None)) -> List[Dict[str, Any]]:
+        reviews = review_engine.get_reviews(status=status)
+        return [r.model_dump() for r in reviews]
+
+    @app.get("/api/reviews/{symbol_id:path}")
+    def get_review_detail(symbol_id: str) -> Dict[str, Any]:
+        detail = review_engine.get_review_detail(symbol_id)
+        if not detail:
+            raise HTTPException(status_code=404, detail="Review detail for symbol not found")
+        return detail.model_dump()
+
+    @app.post("/api/reviews/{symbol_id:path}/status")
+    async def set_review_status(symbol_id: str, req: SetReviewStatusRequest) -> Dict[str, Any]:
+        if req.status == ReviewStatus.ACCEPTED:
+            item = review_engine.accept_change(symbol_id, note=req.note, author=req.author)
+        elif req.status == ReviewStatus.REVIEWED:
+            item = review_engine.mark_reviewed(symbol_id, note=req.note, author=req.author)
+        else:
+            sym = store.get_symbol_by_id("default", symbol_id)
+            file_path = sym.file_path if sym else ""
+            item = store.set_review_status(
+                "default", symbol_id, req.status, decision_reason=req.decision_reason, file_path=file_path
+            )
+            if req.note:
+                review_engine.add_annotation(symbol_id, req.note, author=req.author)
+                item.annotations = store.get_review_annotations("default", symbol_id)
+
+        await ws_manager.broadcast({
+            "type": "review_status_changed",
+            "symbol_id": symbol_id,
+            "status": req.status.value,
+            "decision_reason": req.decision_reason,
+        })
+        return item.model_dump()
+
+    @app.post("/api/reviews/{symbol_id:path}/notes")
+    async def add_review_note(symbol_id: str, req: AddReviewAnnotationRequest) -> Dict[str, Any]:
+        annotation = review_engine.add_annotation(symbol_id, req.note, author=req.author)
+        await ws_manager.broadcast({
+            "type": "review_annotation_added",
+            "symbol_id": symbol_id,
+            "annotation": annotation.model_dump(),
+        })
+        return annotation.model_dump()
+
+    @app.post("/api/reviews/{symbol_id:path}/rollback")
+    async def rollback_symbol(symbol_id: str, req: RollbackRequest) -> Dict[str, Any]:
+        res = review_engine.reject_change(
+            symbol_id, reason=req.reason, safe_rollback=req.safe_rollback, author=req.author
+        )
+        if not res["success"]:
+            raise HTTPException(status_code=400, detail=res.get("error", "Rollback failed"))
+
+        await ws_manager.broadcast({
+            "type": "symbol_rolled_back",
+            "symbol_id": symbol_id,
+            "file_path": res.get("file_path"),
+            "message": res.get("message"),
+        })
+        return res
 
     @app.websocket("/ws/events")
     async def websocket_events(websocket: WebSocket) -> None:

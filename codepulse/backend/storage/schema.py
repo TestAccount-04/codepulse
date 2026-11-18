@@ -79,6 +79,27 @@ CREATE TABLE IF NOT EXISTS change_events (
     FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE SET NULL
 );
 
+CREATE TABLE IF NOT EXISTS reviews (
+    id TEXT PRIMARY KEY,
+    repo_id TEXT NOT NULL,
+    symbol_id TEXT NOT NULL,
+    file_path TEXT NOT NULL,
+    status TEXT DEFAULT 'pending',
+    decision_reason TEXT,
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY (repo_id) REFERENCES repositories(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS review_annotations (
+    id TEXT PRIMARY KEY,
+    repo_id TEXT NOT NULL,
+    symbol_id TEXT NOT NULL,
+    author TEXT DEFAULT 'reviewer',
+    note TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (repo_id) REFERENCES repositories(id) ON DELETE CASCADE
+);
+
 CREATE INDEX IF NOT EXISTS idx_files_repo ON files(repo_id);
 CREATE INDEX IF NOT EXISTS idx_symbols_repo_file ON symbols(repo_id, file_path);
 CREATE INDEX IF NOT EXISTS idx_symbols_name ON symbols(name);
@@ -86,4 +107,7 @@ CREATE INDEX IF NOT EXISTS idx_symbols_parent ON symbols(parent_symbol_id);
 CREATE INDEX IF NOT EXISTS idx_rel_source ON relationships(repo_id, source_id, relationship_type);
 CREATE INDEX IF NOT EXISTS idx_rel_target ON relationships(repo_id, target_id, relationship_type);
 CREATE INDEX IF NOT EXISTS idx_events_repo_time ON change_events(repo_id, timestamp);
+CREATE INDEX IF NOT EXISTS idx_reviews_repo_symbol ON reviews(repo_id, symbol_id);
+CREATE INDEX IF NOT EXISTS idx_reviews_status ON reviews(repo_id, status);
+CREATE INDEX IF NOT EXISTS idx_annotations_symbol ON review_annotations(repo_id, symbol_id);
 """

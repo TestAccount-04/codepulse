@@ -187,3 +187,30 @@ class RepositoryScanner:
             "languages": metrics.languages,
             "duration_seconds": duration,
         }
+
+    def scan_file(self, file_path: Path, root_path: Path) -> Optional[ParseResult]:
+        """Scans and synchronizes a single file into SQLite storage."""
+        full_path = Path(file_path).resolve()
+        root_dir = Path(root_path).resolve()
+        try:
+            rel_path = str(full_path.relative_to(root_dir)).replace("\\", "/")
+        except ValueError:
+            rel_path = str(full_path).replace("\\", "/")
+
+        if not full_path.is_file():
+            self.store.delete_file_data(self.repo_id, rel_path)
+            return None
+
+        ext = full_path.suffix.lower()
+        if ext not in self.extension_map:
+            return None
+
+        code_bytes = full_path.read_bytes()
+        stat = full_path.stat()
+        parser = self.extension_map[ext]
+        parse_result = parser.parse_code(rel_path, code_bytes, self.repo_id)
+        parse_result.file_info.mtime = stat.st_mtime
+        parse_result.file_info.size_bytes = stat.st_size
+        self.store.save_parse_result(self.repo_id, parse_result)
+        return parse_result
+

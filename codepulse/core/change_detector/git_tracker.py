@@ -118,3 +118,52 @@ class GitTracker:
             return output
         except Exception:
             return None
+
+    def restore_file_to_head(self, file_path: str) -> bool:
+        """Safely restore a single file to HEAD commit in the working tree."""
+        if not self._repo:
+            return False
+        clean_path = Path(file_path).as_posix()
+        try:
+            subprocess.check_call(
+                ["git", "checkout", "HEAD", "--", clean_path],
+                cwd=str(self.repo_path),
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            return True
+        except Exception:
+            return False
+
+    def can_apply_reverse_patch(self, patch: str) -> bool:
+        """Checks whether a patch can be cleanly reversed without conflicts."""
+        if not self._repo or not patch.strip():
+            return False
+        try:
+            proc = subprocess.run(
+                ["git", "apply", "--reverse", "--check"],
+                input=patch.encode("utf-8"),
+                cwd=str(self.repo_path),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            return proc.returncode == 0
+        except Exception:
+            return False
+
+    def apply_reverse_patch(self, patch: str) -> bool:
+        """Applies a reverse patch cleanly to the working tree."""
+        if not self._repo or not patch.strip():
+            return False
+        try:
+            proc = subprocess.run(
+                ["git", "apply", "--reverse"],
+                input=patch.encode("utf-8"),
+                cwd=str(self.repo_path),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            return proc.returncode == 0
+        except Exception:
+            return False
+

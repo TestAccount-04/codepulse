@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -18,6 +19,9 @@ from codepulse.core.models import (
     Relationship,
     RelationshipType,
     RepositoryMetrics,
+    ReviewAnnotation,
+    ReviewItem,
+    ReviewStatus,
     Symbol,
     SymbolType,
 )
@@ -563,3 +567,183 @@ class SQLiteStore:
             content_hash=row["content_hash"],
             change_status=ChangeStatus(row["change_status"]),
         )
+
+    # ---------------------------------------------------------
+    # Review Management Methods
+    # ---------------------------------------------------------
+    def get_or_create_review(self, repo_id: str, symbol_id: str, file_path: str) -> ReviewItem:
+        with self.get_connection() as conn:
+            row = conn.execute(
+                "SELECT * FROM reviews WHERE repo_id = ? AND symbol_id = ?",
+                (repo_id, symbol_id),
+            ).fetchone()
+            if row:
+                annotations = self.get_review_annotations(repo_id, symbol_id)
+                return ReviewItem(
+                    id=row["id"],
+                    repo_id=row["repo_id"],
+                    symbol_id=row["symbol_id"],
+                    file_path=row["file_path"],
+                    status=ReviewStatus(row["status"]),
+                    decision_reason=row["decision_reason"],
+                    updated_at=row["updated_at"],
+                    annotations=annotations,
+                )
+            review_id = f"rev_{uuid.uuid4().hex[:12]}"
+            now = datetime.now(timezone.utc).isoformat()
+            conn.execute(
+                """
+                INSERT INTO reviews (id, repo_id, symbol_id, file_path, status, decision_reason, updated_at)
+                VALUES (?, ?, ?, ?, 'pending', NULL, ?)
+                """,
+                (review_id, repo_id, symbol_id, file_path, now),
+            )
+            return ReviewItem(
+                id=review_id,
+                repo_id=repo_id,
+                symbol_id=symbol_id,
+                file_path=file_path,
+                status=ReviewStatus.PENDING,
+                decision_reason=None,
+                updated_at=now,
+                annotations=[],
+            )
+
+    def set_review_status(
+        self,
+        repo_id: str,
+        symbol_id: str,
+        status: ReviewStatus,
+        decision_reason: Optional[str] = None,
+        file_path: Optional[str] = None,
+    ) -> ReviewItem:
+        now = datetime.now(timezone.utc).isoformat()
+        with self.get_connection() as conn:
+            row = conn.execute(
+                "SELECT * FROM reviews WHERE repo_id = ? AND symbol_id = ?",
+                (repo_id, symbol_id),
+            ).fetchone()
+            if row:
+                conn.execute(
+                    """
+                    UPDATE reviews
+                    SET status = ?, decision_reason = ?, updated_at = ?
+                    WHERE repo_id = ? AND symbol_id = ?
+                    """,
+                    (status.value, decision_reason, now, repo_id, symbol_id),
+                )
+                review_id = row["id"]
+                actual_file_path = row["file_path"]
+            else:
+                review_id = f"rev_{uuid.uuid4().hex[:12]}"
+                actual_file_path = file_path or ""
+                conn.execute(
+                    """
+                    INSERT INTO reviews (id, repo_id, symbol_id, file_path, status, decision_reason, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (review_id, repo_id, symbol_id, actual_file_path, status.value, decision_reason, now),
+                )
+        annotations = self.get_review_annotations(repo_id, symbol_id)
+        return ReviewItem(
+            id=review_id,
+            repo_id=repo_id,
+            symbol_id=symbol_id,
+            file_path=actual_file_path,
+            status=status,
+            decision_reason=decision_reason,
+            updated_at=now,
+            annotations=annotations,
+        )
+
+    def get_review(self, repo_id: str, symbol_id: str) -> Optional[ReviewItem]:
+        with self.get_connection() as conn:
+            row = conn.execute(
+                "SELECT * FROM reviews WHERE repo_id = ? AND symbol_id = ?",
+                (repo_id, symbol_id),
+            ).fetchone()
+            if not row:
+                return None
+            annotations = self.get_review_annotations(repo_id, symbol_id)
+            return ReviewItem(
+                id=row["id"],
+                repo_id=row["repo_id"],
+                symbol_id=row["symbol_id"],
+                file_path=row["file_path"],
+                status=ReviewStatus(row["status"]),
+                decision_reason=row["decision_reason"],
+                updated_at=row["updated_at"],
+                annotations=annotations,
+            )
+
+    def list_reviews(
+        self, repo_id: str, status: Optional[ReviewStatus] = None
+    ) -> List[ReviewItem]:
+        with self.get_connection() as conn:
+            if status:
+                rows = conn.execute(
+                    "SELECT * FROM reviews WHERE repo_id = ? AND status = ? ORDER BY updated_at DESC",
+                    (repo_id, status.value),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    "SELECT * FROM reviews WHERE repo_id = ? ORDER BY updated_at DESC",
+                    (repo_id,),
+                ).fetchall()
+            result = []
+            for r in rows:
+                ann = self.get_review_annotations(repo_id, r["symbol_id"])
+                result.append(
+                    ReviewItem(
+                        id=r["id"],
+                        repo_id=r["repo_id"],
+                        symbol_id=r["symbol_id"],
+                        file_path=r["file_path"],
+                        status=ReviewStatus(r["status"]),
+                        decision_reason=r["decision_reason"],
+                        updated_at=r["updated_at"],
+                        annotations=ann,
+                    )
+                )
+            return result
+
+    def add_review_annotation(
+        self, repo_id: str, symbol_id: str, note: str, author: str = "reviewer"
+    ) -> ReviewAnnotation:
+        ann_id = f"ann_{uuid.uuid4().hex[:12]}"
+        now = datetime.now(timezone.utc).isoformat()
+        with self.get_connection() as conn:
+            conn.execute(
+                """
+                INSERT INTO review_annotations (id, repo_id, symbol_id, author, note, created_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (ann_id, repo_id, symbol_id, author, note, now),
+            )
+        return ReviewAnnotation(
+            id=ann_id,
+            repo_id=repo_id,
+            symbol_id=symbol_id,
+            author=author,
+            note=note,
+            created_at=now,
+        )
+
+    def get_review_annotations(self, repo_id: str, symbol_id: str) -> List[ReviewAnnotation]:
+        with self.get_connection() as conn:
+            rows = conn.execute(
+                "SELECT * FROM review_annotations WHERE repo_id = ? AND symbol_id = ? ORDER BY created_at ASC",
+                (repo_id, symbol_id),
+            ).fetchall()
+            return [
+                ReviewAnnotation(
+                    id=r["id"],
+                    repo_id=r["repo_id"],
+                    symbol_id=r["symbol_id"],
+                    author=r["author"],
+                    note=r["note"],
+                    created_at=r["created_at"],
+                )
+                for r in rows
+            ]
+

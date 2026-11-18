@@ -148,3 +148,49 @@ class ChangeExplanation(BaseModel):
     impact: str
     risk_level: str
     grounded_evidence: Dict[str, Any] = Field(default_factory=dict)
+
+
+class ReviewStatus(str, Enum):
+    PENDING = "pending"
+    REVIEWED = "reviewed"
+    ACCEPTED = "accepted"
+    REJECTED = "rejected"
+
+
+class ReviewAnnotation(BaseModel):
+    id: str
+    repo_id: str = "default"
+    symbol_id: str
+    author: str = "reviewer"
+    note: str
+    created_at: str
+
+
+class ReviewItem(BaseModel):
+    id: str
+    repo_id: str = "default"
+    symbol_id: str
+    file_path: str
+    status: ReviewStatus = ReviewStatus.PENDING
+    decision_reason: Optional[str] = None
+    updated_at: str
+    annotations: List[ReviewAnnotation] = Field(default_factory=list)
+
+
+class ReviewDetail(BaseModel):
+    symbol_id: str
+    symbol_name: str
+    file_path: str
+    status: ReviewStatus = ReviewStatus.PENDING
+    change_status: ChangeStatus = ChangeStatus.UNCHANGED
+    decision_reason: Optional[str] = None
+    original_code: Optional[str] = None
+    updated_code: Optional[str] = None
+    diff_text: Optional[str] = None
+    structural_summary: Optional[str] = None
+    task_context: Optional[str] = None
+    impact_report: Optional[ImpactReport] = None
+    explanation: Optional[ChangeExplanation] = None
+    agent_session: Optional[AgentSession] = None
+    annotations: List[ReviewAnnotation] = Field(default_factory=list)
+

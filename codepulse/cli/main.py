@@ -11,13 +11,15 @@ from rich.console import Console
 from rich.table import Table
 from rich.tree import Tree
 from rich.panel import Panel
+from rich.markup import escape
 
 from codepulse.backend.storage.sqlite_store import SQLiteStore
 from codepulse.core.change_detector.coordinator import ChangeCoordinator
 from codepulse.core.explanation_engine.engine import ExplanationEngine
 from codepulse.core.impact_analyzer.analyzer import ImpactAnalyzer
-from codepulse.core.models import ChangeStatus, SymbolDiff, SymbolType
+from codepulse.core.models import ChangeStatus, ReviewStatus, SymbolDiff, SymbolType
 from codepulse.core.repository_scanner.scanner import RepositoryScanner
+from codepulse.core.review_engine.engine import ReviewEngine
 from codepulse.core.session_manager.manager import SessionManager
 from codepulse.core.symbol_graph.graph import SymbolGraphManager
 from codepulse.integrations.registry import default_registry
@@ -534,6 +536,219 @@ def explain(
             f"[bold magenta]Impact:[/bold magenta]\n{explanation.impact}\n"
         )
         console.print(Panel(output, title=f"Change Explanation: {explanation.symbol_name}"))
+
+
+@app.command()
+def review(
+    path: Path = typer.Argument(Path("."), help="Path to repository root"),
+    status: Optional[str] = typer.Option(None, "--status", "-s", help="Filter by status (pending, reviewed, accepted, rejected)"),
+    accept: Optional[str] = typer.Option(None, "--accept", "-a", help="Accept change for symbol name"),
+    reject: Optional[str] = typer.Option(None, "--reject", "-r", help="Reject and safely rollback change for symbol name"),
+    mark_reviewed: Optional[str] = typer.Option(None, "--mark-reviewed", "-m", help="Mark symbol as reviewed"),
+    note: Optional[str] = typer.Option(None, "--note", "-n", help="Note/comment to attach"),
+    detail: Optional[str] = typer.Option(None, "--detail", "-d", help="Show full review detail for symbol name"),
+) -> None:
+    """Review agent code changes, inspect original/updated code, accept or safely rollback."""
+    repo_dir = path.resolve()
+    db_file = get_db_path(repo_dir)
+
+    if not db_file.exists():
+        console.print("[bold red]CodePulse is not initialized. Run 'codepulse init' and 'codepulse scan' first.[/bold red]")
+        raise typer.Exit(code=1)
+
+    store = SQLiteStore(db_file)
+    coordinator = ChangeCoordinator(repo_dir, store, repo_id="default")
+    impact_analyzer = ImpactAnalyzer(store, repo_id="default")
+    explanation_engine = ExplanationEngine()
+    session_mgr = SessionManager(store, repo_id="default")
+
+    review_engine = ReviewEngine(
+        root_path=repo_dir,
+        store=store,
+        repo_id="default",
+        git_tracker=coordinator.git_tracker,
+        impact_analyzer=impact_analyzer,
+        explanation_engine=explanation_engine,
+        session_mgr=session_mgr,
+    )
+
+    # 1. Action: Detail View
+    if detail:
+        symbols = store.list_symbols("default")
+        matches = [s for s in symbols if s.name == detail]
+        if not matches:
+            console.print(f"[bold red]Symbol '{detail}' not found in index.[/bold red]")
+            raise typer.Exit(code=1)
+
+        for sym in matches:
+            det = review_engine.get_review_detail(sym.id)
+            if not det:
+                continue
+
+            status_colors = {
+                ReviewStatus.PENDING: "yellow",
+                ReviewStatus.REVIEWED: "cyan",
+                ReviewStatus.ACCEPTED: "green",
+                ReviewStatus.REJECTED: "red",
+            }
+            color = status_colors.get(det.status, "white")
+
+            header_text = (
+                f"[bold cyan]Symbol:[/bold cyan] {det.symbol_name} ({det.change_status.value})\n"
+                f"[bold cyan]File:[/bold cyan]   {det.file_path}\n"
+                f"[bold cyan]Review Status:[/bold cyan] [{color}]{det.status.value.upper()}[/{color}]\n"
+            )
+            if det.task_context:
+                header_text += f"[bold cyan]Task Context:[/bold cyan] {det.task_context}\n"
+            if det.decision_reason:
+                header_text += f"[bold cyan]Decision Reason:[/bold cyan] {det.decision_reason}\n"
+
+            console.print(Panel(header_text, title=f"Review Detail: {det.symbol_name}"))
+
+            if det.explanation:
+                exp_text = (
+                    f"[bold green]What changed:[/bold green]\n{escape(det.explanation.what_changed)}\n\n"
+                    f"[bold yellow]Why:[/bold yellow]\n{escape(det.explanation.why)}\n\n"
+                    f"[bold magenta]Impact & Risk ({det.explanation.risk_level}):[/bold magenta]\n{escape(det.explanation.impact)}"
+                )
+                console.print(Panel(exp_text, title="Change Explanation"))
+
+            if det.original_code or det.updated_code:
+                code_table = Table(show_header=True, header_style="bold magenta", expand=True)
+                code_table.add_column("Original Code (HEAD)", style="dim")
+                code_table.add_column("Updated Code (Current)", style="green")
+                orig = det.original_code or "(None / Newly Added)"
+                upd = det.updated_code or "(Deleted / Empty)"
+                code_table.add_row(escape(orig.strip()), escape(upd.strip()))
+                console.print(code_table)
+
+            if det.annotations:
+                ann_table = Table(title="Review Annotations", show_header=True, header_style="bold yellow")
+                ann_table.add_column("Author", style="cyan")
+                ann_table.add_column("Note", style="white")
+                ann_table.add_column("Timestamp", style="dim")
+                for a in det.annotations:
+                    ann_table.add_row(a.author, a.note, a.created_at)
+                console.print(ann_table)
+
+        return
+
+    # 2. Action: Accept
+    if accept:
+        symbols = store.list_symbols("default")
+        matches = [s for s in symbols if s.name == accept]
+        if not matches:
+            console.print(f"[bold red]Symbol '{accept}' not found.[/bold red]")
+            raise typer.Exit(code=1)
+        for sym in matches:
+            item = review_engine.accept_change(sym.id, note=note)
+            console.print(
+                Panel.fit(
+                    f"[bold green]Accepted Change for '{sym.name}'[/bold green]\n"
+                    f"File: {sym.file_path}\n"
+                    f"Status: {item.status.value.upper()}\n"
+                    f"[dim]Note: As per spec section 12, repository files are preserved.[/dim]",
+                    title="Review Accepted",
+                )
+            )
+        return
+
+    # 3. Action: Reject & Safe Rollback
+    if reject:
+        symbols = store.list_symbols("default")
+        matches = [s for s in symbols if s.name == reject]
+        if not matches:
+            console.print(f"[bold red]Symbol '{reject}' not found.[/bold red]")
+            raise typer.Exit(code=1)
+        for sym in matches:
+            res = review_engine.reject_change(sym.id, reason=note, safe_rollback=True)
+            if res["success"]:
+                console.print(
+                    Panel.fit(
+                        f"[bold yellow]Rejected Change for '{sym.name}'[/bold yellow]\n"
+                        f"File: {sym.file_path}\n"
+                        f"Rollback: [green]SAFE ROLLBACK APPLIED[/green]\n"
+                        f"Message: {res['message']}",
+                        title="Review Rejected",
+                    )
+                )
+            else:
+                console.print(
+                    Panel.fit(
+                        f"[bold red]Rejection/Rollback Failed for '{sym.name}'[/bold red]\n"
+                        f"Error: {res.get('error')}\n"
+                        f"[dim]Unrelated user edits were protected from modification.[/dim]",
+                        title="Rollback Aborted",
+                    )
+                )
+        return
+
+    # 4. Action: Mark Reviewed
+    if mark_reviewed:
+        symbols = store.list_symbols("default")
+        matches = [s for s in symbols if s.name == mark_reviewed]
+        if not matches:
+            console.print(f"[bold red]Symbol '{mark_reviewed}' not found.[/bold red]")
+            raise typer.Exit(code=1)
+        for sym in matches:
+            item = review_engine.mark_reviewed(sym.id, note=note)
+            console.print(
+                Panel.fit(
+                    f"[bold cyan]Marked '{sym.name}' as Reviewed[/bold cyan]\n"
+                    f"File: {sym.file_path}\n"
+                    f"Status: {item.status.value.upper()}",
+                    title="Review Status",
+                )
+            )
+        return
+
+    # 5. Default: List all reviews
+    filter_status = None
+    if status:
+        try:
+            filter_status = ReviewStatus(status.lower())
+        except ValueError:
+            console.print(f"[bold red]Invalid status '{status}'. Choose from: pending, reviewed, accepted, rejected.[/bold red]")
+            raise typer.Exit(code=1)
+
+    items = review_engine.get_reviews(status=filter_status)
+    if not items:
+        msg = f"No changes matching status '{filter_status.value}'." if filter_status else "No changed symbols found to review."
+        console.print(f"[bold green]{msg}[/bold green]")
+        return
+
+    table = Table(title="CodePulse Change Review Panel", show_header=True, header_style="bold magenta")
+    table.add_column("Symbol", style="cyan")
+    table.add_column("File", style="white")
+    table.add_column("Change", style="yellow")
+    table.add_column("Review Status", justify="center")
+    table.add_column("Notes", justify="center")
+    table.add_column("Updated", style="dim")
+
+    for it in items:
+        sym = store.get_symbol_by_id("default", it.symbol_id)
+        sym_name = sym.name if sym else it.symbol_id
+        ch_status = sym.change_status.value if sym else "unknown"
+
+        status_badge = {
+            ReviewStatus.ACCEPTED: "[bold green]ACCEPTED[/bold green]",
+            ReviewStatus.REVIEWED: "[bold blue]REVIEWED[/bold blue]",
+            ReviewStatus.PENDING: "[bold yellow]PENDING[/bold yellow]",
+            ReviewStatus.REJECTED: "[bold red]REJECTED[/bold red]",
+        }.get(it.status, it.status.value)
+
+        table.add_row(
+            sym_name,
+            it.file_path,
+            ch_status.capitalize(),
+            status_badge,
+            str(len(it.annotations)),
+            it.updated_at[:19].replace("T", " "),
+        )
+
+    console.print(table)
+    console.print("[dim]Review commands: codepulse review --detail <symbol> | --accept <symbol> | --reject <symbol> | --note <symbol> \"...\"[/dim]\n")
+
 
 
 @app.command()

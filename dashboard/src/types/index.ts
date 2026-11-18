@@ -69,3 +69,59 @@ export interface BlastRadius {
   downstream_dependencies_count: number;
   downstream_dependencies: string[];
 }
+
+export type ReviewStatus = 'pending' | 'reviewed' | 'accepted' | 'rejected';
+
+export interface ReviewAnnotation {
+  id: string;
+  repo_id: string;
+  symbol_id: string;
+  author: string;
+  note: string;
+  created_at: string;
+}
+
+export interface ReviewItem {
+  id: string;
+  repo_id: string;
+  symbol_id: string;
+  file_path: string;
+  status: ReviewStatus;
+  decision_reason?: string;
+  updated_at: string;
+  annotations: ReviewAnnotation[];
+}
+
+export interface ReviewDetail {
+  symbol_id: string;
+  symbol_name: string;
+  file_path: string;
+  status: ReviewStatus;
+  change_status: ChangeStatus;
+  decision_reason?: string;
+  original_code?: string;
+  updated_code?: string;
+  diff_text?: string;
+  structural_summary?: string;
+  task_context?: string;
+  impact_report?: {
+    risk_level: string;
+    risk_score: number;
+    direct_callers: Array<{ caller_name: string; file_path: string; line: number }>;
+    indirect_callers: string[];
+    related_tests: string[];
+  };
+  explanation?: {
+    what_changed: string;
+    why: string;
+    impact: string;
+    risk_level: string;
+  };
+  agent_session?: {
+    id: string;
+    agent_name: string;
+    task_description?: string;
+  };
+  annotations: ReviewAnnotation[];
+}
+

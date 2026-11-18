@@ -1,0 +1,150 @@
+{
+  "name": "codepulse-vscode",
+  "displayName": "CodePulse — Code Change Intelligence",
+  "description": "Observability, blast-radius impact analysis, and review panel for AI coding agents.",
+  "version": "0.1.0",
+  "publisher": "codepulse",
+  "engines": {
+    "vscode": "^1.80.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Linters",
+    "Other"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "codepulse-container",
+          "title": "CodePulse",
+          "icon": "resources/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "codepulse-container": [
+        {
+          "id": "codepulse.changesView",
+          "name": "Changed Symbols & Review"
+        },
+        {
+          "id": "codepulse.sessionView",
+          "name": "Active Agent Session"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "codepulse.refresh",
+        "title": "CodePulse: Refresh Status & Changes",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "codepulse.openSymbol",
+        "title": "CodePulse: Jump to Symbol"
+      },
+      {
+        "command": "codepulse.openDiff",
+        "title": "CodePulse: Open Git Diff",
+        "icon": "$(diff)"
+      },
+      {
+        "command": "codepulse.acceptChange",
+        "title": "CodePulse: Accept Change",
+        "icon": "$(check)"
+      },
+      {
+        "command": "codepulse.rejectChange",
+        "title": "CodePulse: Reject & Rollback Change",
+        "icon": "$(discard)"
+      },
+      {
+        "command": "codepulse.markReviewed",
+        "title": "CodePulse: Mark Symbol Reviewed",
+        "icon": "$(eye)"
+      },
+      {
+        "command": "codepulse.addNote",
+        "title": "CodePulse: Add Review Note",
+        "icon": "$(comment)"
+      },
+      {
+        "command": "codepulse.showImpact",
+        "title": "CodePulse: Show Impact & Blast Radius",
+        "icon": "$(shield)"
+      },
+      {
+        "command": "codepulse.openDashboard",
+        "title": "CodePulse: Open Web Dashboard",
+        "icon": "$(browser)"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "codepulse.refresh",
+          "when": "view == codepulse.changesView",
+          "group": "navigation"
+        },
+        {
+          "command": "codepulse.openDashboard",
+          "when": "view == codepulse.changesView",
+          "group": "navigation"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "codepulse.acceptChange",
+          "when": "view == codepulse.changesView && viewItem == symbolItem",
+          "group": "inline@1"
+        },
+        {
+          "command": "codepulse.rejectChange",
+          "when": "view == codepulse.changesView && viewItem == symbolItem",
+          "group": "inline@2"
+        },
+        {
+          "command": "codepulse.addNote",
+          "when": "view == codepulse.changesView && viewItem == symbolItem",
+          "group": "inline@3"
+        },
+        {
+          "command": "codepulse.showImpact",
+          "when": "view == codepulse.changesView && viewItem == symbolItem",
+          "group": "inline@4"
+        }
+      ]
+    },
+    "configuration": {
+      "type": "object",
+      "title": "CodePulse",
+      "properties": {
+        "codepulse.backendUrl": {
+          "type": "string",
+          "default": "http://127.0.0.1:8000",
+          "description": "CodePulse local backend server URL."
+        },
+        "codepulse.autoRefreshInterval": {
+          "type": "number",
+          "default": 5,
+          "description": "Auto-refresh poll interval in seconds (0 to disable)."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run build",
+    "build": "tsc -p ./",
+    "watch": "tsc -watch -p ./"
+  },
+  "devDependencies": {
+    "@types/node": "^20.19.43",
+    "@types/vscode": "^1.146.0",
+    "typescript": "^5.9.3"
+  }
+}
