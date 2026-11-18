@@ -14,6 +14,8 @@ from pydantic import BaseModel
 from codepulse.backend.storage.sqlite_store import SQLiteStore
 from codepulse.backend.websocket.manager import ws_manager
 from codepulse.core.change_detector.coordinator import ChangeCoordinator
+from codepulse.core.explanation_engine.engine import ExplanationEngine
+from codepulse.core.impact_analyzer.analyzer import ImpactAnalyzer
 from codepulse.core.models import ChangeStatus, SymbolDiff, SymbolType
 from codepulse.core.repository_scanner.scanner import RepositoryScanner
 from codepulse.core.session_manager.manager import SessionManager
@@ -42,6 +44,8 @@ def create_app(
     coordinator = ChangeCoordinator(root_path, store, repo_id="default")
     graph_mgr = SymbolGraphManager(store, repo_id="default")
     session_mgr = SessionManager(store, repo_id="default")
+    impact_analyzer = ImpactAnalyzer(store, repo_id="default")
+    explanation_engine = ExplanationEngine()
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -236,6 +240,47 @@ def create_app(
     def get_diff(file_path: str) -> Dict[str, Any]:
         diff_text = coordinator.git_tracker.get_file_diff(file_path)
         return {"file_path": file_path, "diff": diff_text}
+
+    # Impact and Explanation Endpoints
+    @app.get("/api/impact/{symbol_id:path}")
+    def get_symbol_impact(symbol_id: str, depth: int = Query(3)) -> Dict[str, Any]:
+        report = impact_analyzer.analyze_symbol_impact(symbol_id, depth=depth)
+        return report.model_dump()
+
+    @app.get("/api/explain/{symbol_id:path}")
+    def get_symbol_explanation(
+        symbol_id: str,
+        session_id: Optional[str] = Query(None),
+    ) -> Dict[str, Any]:
+        sym = store.get_symbol_by_id("default", symbol_id)
+        if not sym:
+            raise HTTPException(status_code=404, detail="Symbol not found")
+
+        diff = SymbolDiff(
+            symbol_id=sym.id,
+            symbol_name=sym.name,
+            symbol_type=sym.symbol_type,
+            file_path=sym.file_path,
+            status=sym.change_status,
+            new_signature=sym.signature,
+            new_start_line=sym.start_line,
+        )
+
+        task_desc = None
+        if session_id:
+            sess = session_mgr.get_session(session_id)
+            if sess:
+                task_desc = sess.task_description
+        else:
+            active_sess = session_mgr.get_active_session()
+            if active_sess:
+                task_desc = active_sess.task_description
+
+        impact_report = impact_analyzer.analyze_symbol_impact(symbol_id)
+        explanation = explanation_engine.explain_change(
+            diff, task_description=task_desc, impact_report=impact_report
+        )
+        return explanation.model_dump()
 
     # Session Management
     @app.get("/api/sessions")

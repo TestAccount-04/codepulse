@@ -14,6 +14,8 @@ from rich.panel import Panel
 
 from codepulse.backend.storage.sqlite_store import SQLiteStore
 from codepulse.core.change_detector.coordinator import ChangeCoordinator
+from codepulse.core.explanation_engine.engine import ExplanationEngine
+from codepulse.core.impact_analyzer.analyzer import ImpactAnalyzer
 from codepulse.core.models import ChangeStatus, SymbolDiff, SymbolType
 from codepulse.core.repository_scanner.scanner import RepositoryScanner
 from codepulse.core.session_manager.manager import SessionManager
@@ -416,6 +418,122 @@ def agents_uninstall(
         console.print(f"[bold green]Successfully uninstalled hook for {adapter.display_name}.[/bold green]")
     else:
         console.print(f"[yellow]No active hook found for {adapter.display_name}.[/yellow]")
+
+
+@app.command()
+def impact(
+    symbol_name: str = typer.Argument(..., help="Name of symbol to analyze impact for"),
+    path: Path = typer.Argument(Path("."), help="Path to repository root"),
+    depth: int = typer.Option(3, "--depth", "-d", help="Traversal depth for indirect callers"),
+) -> None:
+    """Analyze blast-radius impact, callers, related tests, and risk score for a symbol."""
+    repo_dir = path.resolve()
+    db_file = get_db_path(repo_dir)
+
+    if not db_file.exists():
+        console.print("[bold red]CodePulse is not initialized. Run 'codepulse init' and 'codepulse scan' first.[/bold red]")
+        raise typer.Exit(code=1)
+
+    store = SQLiteStore(db_file)
+    impact_analyzer = ImpactAnalyzer(store, repo_id="default")
+    symbols = store.list_symbols("default")
+    matches = [s for s in symbols if s.name == symbol_name]
+
+    if not matches:
+        console.print(f"[bold red]Symbol '{symbol_name}' not found in index.[/bold red]")
+        raise typer.Exit(code=1)
+
+    for sym in matches:
+        report = impact_analyzer.analyze_symbol_impact(sym.id, depth=depth)
+
+        risk_color = {
+            "LOW": "green",
+            "MEDIUM": "yellow",
+            "HIGH": "red",
+            "CRITICAL": "bold red",
+        }.get(report.risk_level, "white")
+
+        panel_text = (
+            f"[bold cyan]Symbol:[/bold cyan] {report.symbol_name}\n"
+            f"[bold cyan]File:[/bold cyan]   {report.file_path}\n"
+            f"[bold cyan]ID:[/bold cyan]     {report.symbol_id}\n\n"
+            f"[bold]Blast-Radius Risk:[/bold] [{risk_color}]{report.risk_level}[/{risk_color}] (Score: {report.risk_score}/10.0)\n\n"
+            f"[bold yellow]Direct Callers ({len(report.direct_callers)}):[/bold yellow]\n"
+        )
+        for c in report.direct_callers:
+            panel_text += f"  • [red]{c['caller_name']}[/red] in {c['file_path']}:{c['line']}\n"
+        if not report.direct_callers:
+            panel_text += "  (None detected)\n"
+
+        panel_text += f"\n[bold yellow]Indirect Callers ({len(report.indirect_callers)}):[/bold yellow]\n"
+        for ic in report.indirect_callers[:5]:
+            panel_text += f"  • {ic}\n"
+        if len(report.indirect_callers) > 5:
+            panel_text += f"  ... and {len(report.indirect_callers) - 5} more\n"
+        if not report.indirect_callers:
+            panel_text += "  (None detected)\n"
+
+        panel_text += f"\n[bold yellow]Related Tests Discovered ({len(report.related_tests)}):[/bold yellow]\n"
+        for t in report.related_tests:
+            panel_text += f"  • [green]{t}[/green]\n"
+        if not report.related_tests:
+            panel_text += "  [dim](No direct test files identified)[/dim]\n"
+
+        console.print(Panel(panel_text, title=f"Impact Analysis: {report.symbol_name}"))
+
+
+@app.command()
+def explain(
+    symbol_name: str = typer.Argument(..., help="Name of symbol to explain changes for"),
+    path: Path = typer.Argument(Path("."), help="Path to repository root"),
+) -> None:
+    """Generate an evidence-grounded What / Why / Impact change explanation for a symbol."""
+    repo_dir = path.resolve()
+    db_file = get_db_path(repo_dir)
+
+    if not db_file.exists():
+        console.print("[bold red]CodePulse is not initialized. Run 'codepulse init' and 'codepulse scan' first.[/bold red]")
+        raise typer.Exit(code=1)
+
+    store = SQLiteStore(db_file)
+    symbols = store.list_symbols("default")
+    matches = [s for s in symbols if s.name == symbol_name]
+
+    if not matches:
+        console.print(f"[bold red]Symbol '{symbol_name}' not found in index.[/bold red]")
+        raise typer.Exit(code=1)
+
+    impact_analyzer = ImpactAnalyzer(store, repo_id="default")
+    explanation_engine = ExplanationEngine()
+    session_mgr = SessionManager(store, repo_id="default")
+    active_session = session_mgr.get_active_session()
+
+    for sym in matches:
+        diff = SymbolDiff(
+            symbol_id=sym.id,
+            symbol_name=sym.name,
+            symbol_type=sym.symbol_type,
+            file_path=sym.file_path,
+            status=sym.change_status,
+            new_signature=sym.signature,
+            new_start_line=sym.start_line,
+        )
+        impact_report = impact_analyzer.analyze_symbol_impact(sym.id)
+        task_desc = active_session.task_description if active_session else None
+
+        explanation = explanation_engine.explain_change(
+            diff, task_description=task_desc, impact_report=impact_report
+        )
+
+        output = (
+            f"[bold cyan]Method:[/bold cyan] {explanation.symbol_name}()\n"
+            f"[bold cyan]Status:[/bold cyan] {explanation.status.value.capitalize()}\n"
+            f"[bold cyan]Risk Level:[/bold cyan] {explanation.risk_level}\n\n"
+            f"[bold green]What changed:[/bold green]\n{explanation.what_changed}\n\n"
+            f"[bold yellow]Why:[/bold yellow]\n{explanation.why}\n\n"
+            f"[bold magenta]Impact:[/bold magenta]\n{explanation.impact}\n"
+        )
+        console.print(Panel(output, title=f"Change Explanation: {explanation.symbol_name}"))
 
 
 @app.command()

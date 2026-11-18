@@ -124,3 +124,27 @@ class AgentSession(BaseModel):
     ended_at: Optional[str] = None
     status: str = "active"
     metadata: Dict[str, Any] = Field(default_factory=dict)
+
+
+class ImpactReport(BaseModel):
+    symbol_id: str
+    symbol_name: str
+    file_path: str
+    direct_callers: List[Dict[str, Any]] = Field(default_factory=list)
+    indirect_callers: List[str] = Field(default_factory=list)
+    direct_callees: List[str] = Field(default_factory=list)
+    imports: List[str] = Field(default_factory=list)
+    inherits: List[str] = Field(default_factory=list)
+    related_tests: List[str] = Field(default_factory=list)
+    risk_level: str = "LOW"
+    risk_score: float = 0.0
+
+
+class ChangeExplanation(BaseModel):
+    symbol_name: str
+    status: ChangeStatus
+    what_changed: str
+    why: str
+    impact: str
+    risk_level: str
+    grounded_evidence: Dict[str, Any] = Field(default_factory=dict)
