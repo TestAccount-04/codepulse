@@ -39,6 +39,24 @@ DEFAULT_IGNORE_PATTERNS = {
     "*.egg-info",
     "*.pyc",
     "*.class",
+    # Sensitive files, keys, and credentials
+    ".env",
+    ".env.*",
+    "*.env",
+    "*.pem",
+    "*.key",
+    "*.pfx",
+    "*.p12",
+    "id_rsa",
+    "id_rsa.pub",
+    "id_ed25519",
+    "credentials.json",
+    "*.credentials",
+    # Databases and raw logs
+    "*.sqlite",
+    "*.sqlite3",
+    "*.db",
+    "*.log",
 }
 
 

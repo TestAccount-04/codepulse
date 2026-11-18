@@ -182,16 +182,9 @@ class SQLiteStore:
                 (repo_id, file_info.path),
             )
 
-            # Insert symbols
-            for sym in parse_result.symbols:
-                conn.execute(
-                    """
-                    INSERT INTO symbols (
-                        id, repo_id, file_path, name, symbol_type, parent_symbol_id,
-                        start_line, end_line, start_byte, end_byte, signature,
-                        docstring, content_hash, change_status
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
+            # Insert symbols in batch
+            if parse_result.symbols:
+                sym_tuples = [
                     (
                         sym.id,
                         repo_id,
@@ -207,23 +200,38 @@ class SQLiteStore:
                         sym.docstring,
                         sym.content_hash,
                         sym.change_status.value,
-                    ),
+                    )
+                    for sym in parse_result.symbols
+                ]
+                conn.executemany(
+                    """
+                    INSERT INTO symbols (
+                        id, repo_id, file_path, name, symbol_type, parent_symbol_id,
+                        start_line, end_line, start_byte, end_byte, signature,
+                        docstring, content_hash, change_status
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    sym_tuples,
                 )
 
-            # Insert relationships
-            for rel in parse_result.relationships:
-                conn.execute(
-                    """
-                    INSERT INTO relationships (repo_id, source_id, target_id, relationship_type, metadata)
-                    VALUES (?, ?, ?, ?, ?)
-                    """,
+            # Insert relationships in batch
+            if parse_result.relationships:
+                rel_tuples = [
                     (
                         repo_id,
                         rel.source_id,
                         rel.target_id,
                         rel.relationship_type.value,
                         json.dumps(rel.metadata),
-                    ),
+                    )
+                    for rel in parse_result.relationships
+                ]
+                conn.executemany(
+                    """
+                    INSERT INTO relationships (repo_id, source_id, target_id, relationship_type, metadata)
+                    VALUES (?, ?, ?, ?, ?)
+                    """,
+                    rel_tuples,
                 )
 
     def get_symbol_by_id(self, repo_id: str, symbol_id: str) -> Optional[Symbol]:

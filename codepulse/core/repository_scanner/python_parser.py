@@ -278,6 +278,8 @@ class PythonParser(BaseLanguageParser):
                 if func_child:
                     callee_name = self._node_text(func_child, code_bytes)
                     calls.append(callee_name)
+                    if "." in callee_name:
+                        calls.append(callee_name.split(".")[-1])
             for child in curr.children:
                 # Do not re-enter nested function definitions to avoid attributing nested calls to parent
                 if child.type != "function_definition":

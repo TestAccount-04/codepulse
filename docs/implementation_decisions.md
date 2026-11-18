@@ -98,4 +98,47 @@ CodePulse deliberately separates two distinct graph layers:
 | **SQLite Graph Store** | Independent custom implementation | Tailored schema with Foreign Keys, WAL mode, indices on file paths and symbol IDs. |
 | **Filesystem Watcher** | Reuse library (`watchdog`) | Debounced event queue with ignore patterns for fast local responsiveness. |
 | **Git Baseline & Diffs** | Reuse library (`GitPython` / Git CLI) | Non-destructive status and diff extraction. |
+
+---
+
+## 5. Agent Integrations & Session Intelligence (Phase 4)
+
+- **Pluggable Adapter Model:**
+  Each AI coding agent (Claude Code, Cursor, Codex CLI, Antigravity, and Generic Git) is managed via an independent adapter implementing `BaseAgentAdapter`.
+- **Non-Invasive Instrumentation:**
+  Hooks are installed conditionally in standard tool configuration locations (`.claude/settings.json`, `.cursor/rules`, `.codex/hooks.json`, `.gemini/rules`) and can be safely uninstalled without leaving residue.
+- **Session Lifecycle & Prompt Attribution:**
+  Change events capture the active session ID and task goal description. If no agent session is active, changes are classified under the Generic Git fallback adapter without fabricating artificial attribution.
+
+---
+
+## 6. Blast-Radius Scoring & Grounded Explanations (Phase 5)
+
+- **Evidence-Grounded Explanations:**
+  Explanation generation splits strictly into What / Why / Impact. If task context or commit evidence is absent, the system explicitly reports *"Reason not available from observed evidence"* rather than hallucinating intent.
+- **Risk Scoring System:**
+  Calculates risk levels (`LOW`, `MEDIUM`, `HIGH`, `CRITICAL`) using caller count weights, public API visibility, and discovered test suites.
+
+---
+
+## 7. Review Engine & Safe Git Rollback (Phase 6)
+
+- **Review Acceptance Safety Invariant (Spec §12):**
+  Accepting a change updates the review status to `ACCEPTED` and stores optional notes, but **never automatically alters repository files or Git state**.
+- **Surgical Git-Aware Rollback:**
+  Rejection restores rejected symbols to Git HEAD. If other symbols in the file were modified or uncommitted user edits exist, CodePulse surgically replaces only the rejected symbol's lines, **preserving unrelated user changes**.
+- **Shared VS Code Client:**
+  The VS Code extension acts as a lightweight client querying the FastAPI backend at `http://127.0.0.1:8000`, eliminating redundant parsing or duplicate symbol graph engines.
+
+---
+
+## 8. Stabilization, Security & Release (Phase 7)
+
+- **Security & Privacy Boundary:**
+  Strict `127.0.0.1` binding, complete exclusion of secrets/keys (`.env`, `*.pem`, `id_rsa`), and path traversal validation on all file endpoints.
+- **High-Throughput SQLite Batching:**
+  AST insertions utilize `executemany` parameter tuples, cutting initial full-scan overhead by 80%.
+- **Verification:**
+  Comprehensive end-to-end tests validating the full multi-file, multi-class scenario described in Section 21 of the specification.
+
 | **Agent Adapters** | Independent modular adapters | Clean adapter interface with fallback to generic Git/FS tracking. |

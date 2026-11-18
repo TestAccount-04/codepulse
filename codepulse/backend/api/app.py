@@ -274,6 +274,9 @@ def create_app(
 
     @app.get("/api/diff/{file_path:path}")
     def get_diff(file_path: str) -> Dict[str, Any]:
+        target = (root_path / file_path).resolve()
+        if not target.is_relative_to(root_path):
+            raise HTTPException(status_code=400, detail="Path traversal forbidden")
         diff_text = coordinator.git_tracker.get_file_diff(file_path)
         return {"file_path": file_path, "diff": diff_text}
 

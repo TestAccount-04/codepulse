@@ -23,11 +23,26 @@ The following packages are installed as direct dependencies of CodePulse under p
 | `watchdog` | Cross-platform filesystem event monitoring | Apache License 2.0 |
 | `gitpython` | Git repository inspection and plumbing | BSD-3-Clause License |
 | `networkx` | Graph data structures and network algorithms | BSD-3-Clause License |
+| `websockets` | High-performance WebSocket communication | BSD-3-Clause License |
+| `httpx` | Asynchronous HTTP client for API and tests | BSD-3-Clause License |
 | `pytest` | Automated testing framework (development dependency) | MIT License |
 
 ---
 
-## 2. Architectural References & Attribution
+## 2. Frontend & VS Code Dependencies
+
+| Package | Purpose | License |
+|---|---|---|
+| `@xyflow/react` | Interactive node graph canvas | MIT License |
+| `react` & `react-dom` | Declarative UI rendering | MIT License |
+| `lucide-react` | Clean icon toolkit for UI panels | ISC License |
+| `tailwindcss` | Utility-first CSS styling | MIT License |
+| `vite` | Fast frontend bundling and HMR | MIT License |
+| `@types/vscode` | TypeScript definitions for VS Code API | MIT License |
+
+---
+
+## 3. Architectural References & Attribution
 
 In accordance with CodePulse Specification Section 2 (*Reference-Driven Development Strategy*), CodePulse's design references patterns pioneered by several open-source tools:
 

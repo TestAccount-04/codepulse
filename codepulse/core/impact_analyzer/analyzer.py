@@ -49,12 +49,19 @@ class ImpactAnalyzer:
 
         # Incoming relationships: callers of this symbol or its name
         incoming_rels = self.store.get_relationships(self.repo_id, target_id=symbol_id)
-        # Also check name-based matching if callers referenced symbol by name
+        # Also check name-based matching if callers referenced symbol by name or attribute call
         if target_symbol:
             name_incoming = self.store.get_relationships(self.repo_id, target_id=target_symbol.name)
             for r in name_incoming:
                 if r not in incoming_rels:
                     incoming_rels.append(r)
+
+            # Attribute call expressions (e.g. obj.authenticate)
+            all_rels = self.store.get_relationships(self.repo_id)
+            for r in all_rels:
+                if r.relationship_type == RelationshipType.CALLS:
+                    if r.target_id.endswith(f".{target_symbol.name}") and r not in incoming_rels:
+                        incoming_rels.append(r)
 
         direct_caller_ids: Set[str] = set()
         for r in incoming_rels:

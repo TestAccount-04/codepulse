@@ -266,7 +266,13 @@ class ReviewEngine:
                 "error": "Safe rollback requires an initialized Git repository.",
             }
 
-        file_disk_path = self.root_path / sym.file_path
+        file_disk_path = (self.root_path / sym.file_path).resolve()
+        if not file_disk_path.is_relative_to(self.root_path):
+            return {
+                "success": False,
+                "error": "Path traversal detected: Target file outside repository root.",
+            }
+
         all_symbols_in_file = self.store.get_symbols_by_file(self.repo_id, sym.file_path)
         other_modified_symbols = [
             s for s in all_symbols_in_file
