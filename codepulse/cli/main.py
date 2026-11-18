@@ -317,5 +317,36 @@ def watch(
         console.print("[green]Watcher stopped cleanly.[/green]")
 
 
+@app.command()
+def start(
+    path: Path = typer.Argument(Path("."), help="Path to repository root"),
+    host: str = typer.Option("127.0.0.1", "--host", "-h", help="Host interface to bind"),
+    port: int = typer.Option(8000, "--port", "-p", help="Port to listen on"),
+) -> None:
+    """Start CodePulse local HTTP server and WebSocket hub."""
+    repo_dir = path.resolve()
+    db_file = get_db_path(repo_dir)
+
+    if not db_file.exists():
+        console.print("[bold red]CodePulse is not initialized. Run 'codepulse init' and 'codepulse scan' first.[/bold red]")
+        raise typer.Exit(code=1)
+
+    import uvicorn
+    from codepulse.backend.api.app import create_app
+
+    console.print(
+        Panel.fit(
+            f"[bold green]Starting CodePulse Server[/bold green]\n"
+            f"Repository: [cyan]{repo_dir}[/cyan]\n"
+            f"API Server: [bold blue]http://{host}:{port}[/bold blue]\n"
+            f"WebSocket:  [bold cyan]ws://{host}:{port}/ws/events[/bold cyan]\n"
+            f"Dashboard:  [bold white]http://{host}:{port}[/bold white]",
+            title="CodePulse Hub",
+        )
+    )
+    api_app = create_app(repo_root=repo_dir, db_path=db_file)
+    uvicorn.run(api_app, host=host, port=port, log_level="info")
+
+
 if __name__ == "__main__":
     app()
