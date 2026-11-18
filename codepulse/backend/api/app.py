@@ -449,9 +449,28 @@ def create_app(
         except WebSocketDisconnect:
             ws_manager.disconnect(websocket)
 
-    # Static files for dashboard frontend if compiled
-    dist_dir = root_path / "dashboard" / "dist"
-    if dist_dir.is_dir():
-        app.mount("/", StaticFiles(directory=str(dist_dir), html=True), name="dashboard")
+    # Static files for dashboard frontend
+    candidate_dirs = [
+        Path(__file__).resolve().parent.parent / "frontend_dist",
+        Path(__file__).resolve().parent.parent.parent / "dashboard" / "dist",
+        root_path / "dashboard" / "dist",
+    ]
+    frontend_dir = None
+    for cand in candidate_dirs:
+        if cand.is_dir() and (cand / "index.html").is_file():
+            frontend_dir = cand
+            break
+
+    if frontend_dir:
+        app.mount("/", StaticFiles(directory=str(frontend_dir), html=True), name="dashboard")
+    else:
+        @app.get("/")
+        def root_placeholder() -> Dict[str, Any]:
+            return {
+                "message": "CodePulse API is running.",
+                "docs": "/docs",
+                "status": "/api/status",
+                "repository": str(root_path),
+            }
 
     return app

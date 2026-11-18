@@ -49,14 +49,18 @@ export class CodePulseClient {
   }
 
   async getReviews(status?: ReviewStatus): Promise<ReviewItem[]> {
-    const url = status
-      ? `${this.baseUrl}/api/reviews?status=${encodeURIComponent(status)}`
-      : `${this.baseUrl}/api/reviews`;
-    const res = await fetch(url);
-    if (!res.ok) {
-      throw new Error(`Failed to fetch reviews: HTTP ${res.status}`);
+    try {
+      const url = status
+        ? `${this.baseUrl}/api/reviews?status=${encodeURIComponent(status)}`
+        : `${this.baseUrl}/api/reviews`;
+      const res = await fetch(url);
+      if (!res.ok) {
+        return [];
+      }
+      return (await res.json()) as ReviewItem[];
+    } catch {
+      return [];
     }
-    return (await res.json()) as ReviewItem[];
   }
 
   async getReviewDetail(symbolId: string): Promise<ReviewDetail> {

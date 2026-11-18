@@ -42,3 +42,7 @@ codepulse = "codepulse.cli.main:app"
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["codepulse*"]
+
+[tool.setuptools.package-data]
+codepulse = ["frontend_dist/**/*", "frontend_dist/*"]
+
