@@ -451,8 +451,11 @@ def create_app(
 
     # Static files for dashboard frontend
     candidate_dirs = [
-        Path(__file__).resolve().parent.parent / "frontend_dist",
-        Path(__file__).resolve().parent.parent.parent / "dashboard" / "dist",
+        # Inside installed package: codepulse/frontend_dist
+        Path(__file__).resolve().parent.parent.parent / "frontend_dist",
+        # Source tree fallback: codepulse/../dashboard/dist
+        Path(__file__).resolve().parent.parent.parent.parent / "dashboard" / "dist",
+        # Target repo override: <repo_root>/dashboard/dist
         root_path / "dashboard" / "dist",
     ]
     frontend_dir = None
