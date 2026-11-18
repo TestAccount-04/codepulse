@@ -4,8 +4,12 @@
   "description": "Observability, blast-radius impact analysis, and review panel for AI coding agents.",
   "version": "0.1.0",
   "publisher": "codepulse",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/TestAccount-04/codepulse.git"
+  },
   "engines": {
-    "vscode": "^1.80.0"
+    "vscode": "^1.90.0"
   },
   "categories": [
     "Programming Languages",
@@ -144,7 +148,7 @@
   },
   "devDependencies": {
     "@types/node": "^20.19.43",
-    "@types/vscode": "^1.146.0",
+    "@types/vscode": "^1.90.0",
     "typescript": "^5.9.3"
   }
 }
